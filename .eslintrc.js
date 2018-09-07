@@ -30,6 +30,8 @@ module.exports = {
       js: 'never',
       vue: 'never'
     }],
+    'indent': [2, 'tab'],
+    'no-tabs': 'off',
     // disallow reassignment of function parameters
     // disallow parameter object manipulation except for specific exclusions
     'no-param-reassign': ['error', {
