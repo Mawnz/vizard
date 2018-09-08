@@ -1,5 +1,7 @@
 <template>
-	<LineChart :chartData = "chartData"></LineChart>
+	<div class = "half">
+		<LineChart :chartData = "chartData" xAxisText="Number" yAxisText="Value"></LineChart>
+	</div>
 </template>
 
 <script>
@@ -19,10 +21,12 @@ export default {
 	computed: {
 		chartData() {
 			const arr = [];
+			let val = 50;
 			for (let i = 1; i <= this.numOfPoints; i += 1) {
-				arr.push({ x: i, y: Math.floor(Math.random() * 10) });
+				val += (Math.random() > 0.5) ? 5 : -5;
+				arr.push({ x: i, y: val });
 			}
-			return arr;
+			return [{ id: 1, values: arr }];
 		},
 	},
 };
@@ -30,5 +34,8 @@ export default {
 
 <!-- Add "scoped" attribute to limit CSS to this component only -->
 <style scoped lang = "scss">
-
+	div.half {
+		height: 500px;
+		width: 500px;
+	}
 </style>
