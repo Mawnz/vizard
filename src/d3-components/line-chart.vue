@@ -5,21 +5,23 @@
 <script>
 /* eslint-disable indent */
 
-// Import d3
+/* Import D3 and an improved typeof function */
 import * as d3 from 'd3';
+import toType from './tools';
 
 export default {
 	name: 'LineChart',
 	props: {
+		chartData: Array,
 		_key: {
 			type: String,
-			default: () => ('x')
+			default: () => ('x'),
 		},
 		_value: {
 			type: String,
-			default: () => ('y')
+			default: () => ('y'),
 		},
-	}	
+	},
 	data() {
 		return {
 			svg: null,
@@ -32,6 +34,7 @@ export default {
 		this.svg = d3.select('svg');
 		this.g = this.svg.append('svg:g')
 				.attr('transform', `translate(${this.margin.left}, ${this.margin.top})`);
+		this.init();
 	},
 	computed: {
 		width() {
@@ -41,10 +44,10 @@ export default {
 			return this.$el.offsetHeight - this.margin.top - this.margin.bottom;
 		},
 		x() {
-			return d3.scaleTime().range([0, width]);
+			return d3.scaleTime().range([0, this.width]);
 		},
 		y() {
-			return d3.scaleLinear().range([height, 0]);
+			return d3.scaleLinear().range([this.height, 0]);
 		},
 		z() {
 			return d3.scaleOrdinal(d3.schemeCategory10);
@@ -52,9 +55,23 @@ export default {
 		line() {
 			return d3.line()
 				.curve(d3.curveBasis)
-				.x( (d) => { return d[_key] })
-				.y( (d) => { return d[_value] })
-		}
+				.x(d => d[this.key])
+				.y(d => d[this.value]);
+		},
+	},
+	watch: {
+		chartData() {
+			console.log('New Data');
+		},
+	},
+	methods: {
+		init() {
+			/* Determine datatype based on first occurence */
+			console.log(this.chartData);
+			console.log(toType);
+			const type = toType(this.chartData[0][this.x]);
+			console.log(type);
+		},
 	},
 };
 

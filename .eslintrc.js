@@ -32,6 +32,8 @@ module.exports = {
     }],
     'indent': [2, 'tab'],
     'no-tabs': 'off',
+    'linebreak-style': 'off',
+    'no-console': 'off',
     // disallow reassignment of function parameters
     // disallow parameter object manipulation except for specific exclusions
     'no-param-reassign': ['error', {
