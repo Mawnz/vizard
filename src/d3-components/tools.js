@@ -6,3 +6,14 @@ export function toType(obj) {
 export function something() {
 	return 'something';
 }
+
+export function clamp(number, bottom, top) {
+	let result = number;
+	if (number < bottom) {
+		result = bottom;
+	}
+	if (number > top) {
+		result = top;
+	}
+	return result;
+}
