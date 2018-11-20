@@ -1,7 +1,22 @@
 <template>
 	<div class="line-chart__wrapper">
+		<!-- Tooltip -->
+		<div id = "tooltip">
+			<div class="content">
+				<div class="header">Name</div>
+				<div class="content-item">
+					<span class="rect"></span>
+					<span class="text">Value</span>
+				</div>
+			</div>
+		</div>
 		<svg class="line-chart__main"></svg>
 		<svg class="line-chart__preview-window"></svg>
+		<span class="line-chart__button">
+			<button @click="reset">
+				<slot name="button">Reset Zoom</slot>
+			</button>
+		</span>
 	</div>
 </template>
 
@@ -35,6 +50,10 @@ export default {
 		},
 		xAxisText: String,
 		yAxisText: String,
+		options: {
+			type: Object,
+			default: () => ({})
+		}
 	},
 	data() {
 		return {
@@ -45,9 +64,10 @@ export default {
 				g: null,
 				container: null,
 				dragged: null,
-				margin: { top: 10, right: 10, bottom: 15, left: 30 }
+				margin: { top: 0, right: 0, bottom: 0, left: 20 }
 			},
 			g: null,
+			chartGrid: null,
 			lines: null,
 			margin: { top: 20, right: 200, bottom: 30, left: 50 },
 			ratio: 6,
@@ -63,12 +83,13 @@ export default {
 			vGroup: null,
 			rescaledX: null,
 			rescaledY: null,
-			horizontalAlignment: 0,
+			ticks: 10,
+			tooltip: null
 		};
 	},
 	mounted() {
 		d3.select(this.$el).on("keydown", function () {
-    		this.zooming = d3.event.ctrlKey;
+			this.zooming = d3.event.ctrlKey;
 		});
 		/* Save height and width */
 		this.width = this.$el.offsetWidth; this.height = this.$el.offsetHeight;
@@ -77,6 +98,8 @@ export default {
 		/* Save svg as variable on instance for later */
 		this.svg = d3.select('.line-chart__main');
 		this.preview.svg = d3.select('.line-chart__preview-window');
+		/* Save tooltip */
+		this.tooltip = d3.select(this.$el).select('div#tooltip');
 		/* Initialize svg elements that are constant */
 		this.init();
 		/* Call update function to populate the chart with data */
@@ -90,6 +113,12 @@ export default {
 			if(!this.chartData || this.chartData.length === 0) return null
 			return toType(this.chartData[0].values[0][this.xAxis]);
 		},
+		scaleX() {
+			return (this.transform && this.transform.k > 1) ? this.rescaledX : this.x;
+		},
+		scaleY() {
+			return (this.transform && this.transform.k > 1) ? this.rescaledY : this.y;
+		},
 		/*
 		 * Property that calculates the padding for the content in our svg
 		 */
@@ -98,6 +127,9 @@ export default {
 			const height = this.height - this.margin.top - this.margin.bottom;
 			return { w: width, h: height };
 		},
+		/*
+		 * For preview window
+		 */
 		previewDimensions() {
 			return { w: this.width / this.ratio, h: this.height / this.ratio };
 		},
@@ -125,7 +157,8 @@ export default {
 		 * Returns a linear scale for our y axis with range set to the height of our svg content
 		 */
 		y() {
-			return d3.scaleLinear().range([this.padded.h, 0]);
+			const scale = d3.scaleLinear().range([this.padded.h, 0]);
+			return scale;
 		},
 		/*
 		 * Returns a color scale with ten (10) colors
@@ -149,6 +182,7 @@ export default {
 				.x(d => this.rescaledX(d[this.xAxis]))
 				.y(d => this.rescaledY(d[this.yAxis]));
 		},
+		/* not used */
 		previewLine() {
 			return d3.line()
 				.x(d => this.previewX(d[this.xAxis]))
@@ -159,7 +193,7 @@ export default {
 		 */
 		zoom() {
 			return d3.zoom()
-				.scaleExtent([1, 10])
+				.scaleExtent([1, 5])
 				.translateExtent([[0, 0], [this.width, this.height]])
 				.filter(function() {
 					return d3.event.ctrlKey && (d3.event.type === 'wheel' || d3.event.type === 'mousedown');
@@ -167,11 +201,15 @@ export default {
 				.on('zoom', this.zoomed)
 				.on('end', () => {
 					/* We use a timeout since there is a delay after zooming */
-					setTimeout(() => {
-						this.setLine(true);
-					}, 100)
+					this.setLine(true);
 				});
-		}
+		},
+		/*
+		 * Used to find closest point on line for focus
+		 */
+		bisect() {
+			return d3.bisector(d => d[this.xAxis]).right;
+		},
 	},
 	/*
 	 * Watchers
@@ -180,8 +218,11 @@ export default {
 		/*
 		 * Whenever new data is present in the component we update the chart
 		 */
-		chartData(newData, oldData) {
-			this.update(newData, oldData);
+		chartData: {
+			handler(newData, oldData) {
+				this.update(newData, oldData);
+			},
+			deep: true
 		},
 	},
 	/*
@@ -221,33 +262,38 @@ export default {
 			this.g = this.svg.append('svg:g')
 				.attr('height', this.padded.h)
 				.attr('width', this.padded.w)
-				.attr('transform', `translate(${this.margin.left}, ${this.margin.top})`);
+				.attr('transform', `translate(${this.margin.left}, ${this.margin.top})`)
 
-			this.lines = this.g.append('svg:g')
+			const graphics = this.g.append('svg:g')
+				.attr('height', this.padded.h)
+				.attr('width', this.padded.w)
+				.style('clip-path', 'url(#line-chart__clip--main)');
+
+			this.lines = graphics.append('svg:g')
 				.attr('class', 'line-chart__lines')
-				.attr('clip-path', 'url(#clip)')
 				.attr('height', this.padded.h)
 				.attr('width', this.padded.w);
 
 			/* Axis */
 			this.xAxisG = this.g.append('svg:g')
 				.attr('class', 'axis axis--x');
-			this.yAxisG = this.g.append('svg:g')
-				.attr('class', 'axis axis--y');
-
-			this.yAxisG.append('svg:text')
-				.attr('transform', 'rotate(-90)')
-				.attr('y', 6)
-				.attr('dy', '0.71em')
-				.attr('fill', '#000')
-				.text(this.yAxisText);
+			if(!this.options.hideYAxis) {
+				this.yAxisG = this.g.append('svg:g')
+					.attr('class', 'axis axis--y');
+				this.yAxisG.append('svg:text')
+					.attr('transform', 'rotate(-90)')
+					.attr('y', 6)
+					.attr('dy', '0.71em')
+					.attr('fill', '#000')
+					.text(this.yAxisText);
+			}
 
 			/* Legend */
 			this.legend = this.g.append('svg:g')
 				.attr('class', 'line-chart__legend-container');
 
 			/* Vertical line */
-			this.verticalLine = this.g.append('svg:g')
+			this.verticalLine = graphics.append('svg:g')
 				.attr('class', 'line-chart__verticalLine-container')
 				.attr('transform', `translate(${this.padded.w / 4}, 0)`);
 
@@ -256,16 +302,15 @@ export default {
 				.attr('x1', 0)
 				.attr('y1', 0)
 				.attr('x2', 0)
-				.attr('y2', this.padded.h)
-				.style('stroke-width', '2px')
-				.style('stroke', '#D3D3D3');
+				.attr('y2', this.padded.h);
 
-			/* Used to clip elements outside of zoomed area */
-			this.svg.append('defs').append('svg:clipPath')
-				.attr('id', 'clip')
-				.append('rect')
-				.attr('width', this.padded.w)
-				.attr('height', this.padded.h);
+			this.makeClipPaths(graphics);
+		},
+		reset() {
+			/* This resets the zoom level */
+			this.svg.transition()
+				.call(this.zoom.transform, d3.zoomIdentity);
+			this.transform = null;
 		},
 		/*
 		 * Update function that renders the chart using the data provided
@@ -276,12 +321,16 @@ export default {
 		update(newData, oldData) {
 			if(!newData || newData.length === 0) return this.redraw([])
 			this.$data.data = newData;
+
+			this.reset();
+
 			/* Set up domains */
 			const extentX = d3.extent(newData[0].values, d => d[this.xAxis]);
 			const extentY = [
 				d3.min(newData, d => d3.min(d.values, v => v[this.yAxis])),
 				d3.max(newData, d => d3.max(d.values, v => v[this.yAxis])),
 			];
+
 			this.x.domain(extentX);
 			this.y.domain(extentY);
 
@@ -289,10 +338,19 @@ export default {
 			this.previewY.domain(extentY);
 
 			this.z.domain(newData.map(d => d.id));
+
+			/* Autoset focused to first index */
+			this.focused = newData.map(data => data.values[0]);
+			this.setLine(true);
+
 			/* Update axes */
-			this.xAxisG.call(d3.axisBottom(this.x))
+			this.xAxisG.call(d3.axisBottom(this.x).ticks(this.ticks).tickSize(-this.padded.h))
+				.attr('class', 'line-chart__grid')
 				.attr('transform', `translate(0, ${this.padded.h})`);
-			this.yAxisG.call(d3.axisLeft(this.y));
+			if(!this.options.hideYAxis)
+				this.yAxisG.call(d3.axisLeft(this.y).ticks(this.ticks).tickSize(-this.padded.w))
+					.attr('class', 'line-chart__grid');
+
 			/* Update legend and preview window axis */
 			this.legend.selectAll('legend--rect')
 				.data(newData).enter()
@@ -301,7 +359,7 @@ export default {
 			this.preview.svg
 				.data(newData).enter()
 				.call(this.makePreviewWindow);
-			// const legend_offset = (this.padded.w / 2) - (this.legend.node().getBoundingClientRect().width / 2);
+
 			const legend_offset = {
 				x: this.padded.w + this.preview.margin.left,
 				y: this.previewDimensions.h
@@ -314,9 +372,11 @@ export default {
 
 			/* Circles for focus on line */
 			this.verticalLine.selectAll('.verticalLine-container--circle').remove();
+
 			const circles = this.verticalLine.selectAll('.verticalLine-container--circle')
 				.data(newData).enter()
 				.append('svg:circle');
+
 			circles
 				.attr('class', 'verticalLine-container--circle')
 				.attr('id', d => `${d.label}_${d.id}`)
@@ -324,6 +384,16 @@ export default {
 				.attr('stroke', d => this.z(d.id));
 
 			this.circles();
+		},
+		makeClipPaths(g) {
+			/* Used to clip elements outside of zoomed area */
+			const defs = g.append('defs');
+
+			defs.append('svg:clipPath')
+				.attr('id', 'line-chart__clip--main')
+			.append('svg:rect')
+				.attr('width', this.padded.w)
+				.attr('height', this.padded.h);
 		},
 		makeLegend(d) {
 			/* Graphics */
@@ -361,8 +431,6 @@ export default {
 			rects.on('click', this.toggleLineVisibility);
 		},
 		makePreviewWindow() {
-
-
 			this.preview.g.append('svg:g')
 				.attr('class', 'preview-axis axix--x')
 				.attr('transform', `translate(0, ${ this.previewDimensions.h })`);
@@ -438,43 +506,45 @@ export default {
 				.text(d => d.id);
 		},
 		setLine(zoom) {
+			let translateX = 0;
+
 			if(!zoom) {
 				let x = d3.event.clientX - this.margin.left - this.svg.node().getBoundingClientRect().left;
-			
-				if(x > this.padded.w) x = this.padded.w;
-				if(x < 0) x = 0;
 
-				this.verticalLine
-					.attr('transform', `translate(${x}, 0)`);
+				const _x = this.transform ? this.rescaledX.invert(x) : this.x.invert(x);
+				const i = this.bisect(this.$data.data[0].values, _x);
+				const d0 = this.$data.data[0].values[i - 1];
+				const d1 = this.$data.data[0].values[i];
+				let realIndex = 0;
+				/* Figure out which datapoint we are closest to */
+				if(d1 && d0)
+					realIndex = (_x - d0[this.xAxis]) > (d1[this.xAxis] - _x) ? i : (i - 1);
+				else
+					realIndex = i === 0 ? 0 : i - 1;
+
+				/* Add coordinates to list */
+				this.focused = this.$data.data.map(data => data.values[realIndex]);
 			}
 
+			if(this.transform)
+				translateX = this.rescaledX(this.focused[0][this.xAxis]);
+			else
+				translateX = this.x(this.focused[0][this.xAxis]);
+
 			this.verticalLine
+				.attr('transform', `translate(${translateX}, 0)`)
 				.call(this.circles);
+
+			/* Finally call to set tooltip */
+			this.showTooltip();
 		},
 		circles() {
-			const vm = this;
-			let xPos = parseInt(this.verticalLine.attr('transform').replace(/^\D+/g, '').split(',')[0]);
-			let yPos = [];
-			d3.selectAll('.line').each( function() {
-				let start = 0;
-				let end = this.getTotalLength();
-				let pos;
-				while(true) {
-					let target = (start + end) / 2;				
-					pos = this.getPointAtLength(target);
-					if((target === end || target === start) && pos !== xPos) {
-						break;
-					}
-					if(pos.x > xPos) end = target;
-					else if(pos.x < xPos) start = target
-					else break;
-				}
-
-				yPos.push(pos.y);
-			});
+			const yCoords = this.focused.map(c => 
+				this.transform ? this.rescaledY(c[this.yAxis]) : this.y(c[this.yAxis])
+			);
 
 			this.verticalLine.selectAll('.verticalLine-container--circle')
-				.attr('transform', d => `translate(0, ${yPos[d.id - 1]})`);
+				.attr('transform', (d, i) => `translate(0, ${yCoords[i]})`);
 		},
 		toggleLineVisibility: function(d){
 			const i = this.hidden.indexOf(d.id);
@@ -570,9 +640,9 @@ export default {
 
 			this.rescaledX = this.transform.rescaleX(this.x);
 			this.rescaledY = this.transform.rescaleY(this.y);
-		
-			this.xAxisG.call(d3.axisBottom(this.rescaledX));
-			this.yAxisG.call(d3.axisLeft(this.rescaledY));
+			this.xAxisG.call(d3.axisBottom(this.rescaledX).ticks(this.ticks).tickSize(-this.padded.h));
+			if(!this.options.hideYAxis)
+				this.yAxisG.call(d3.axisLeft(this.rescaledY).ticks(this.ticks).tickSize(-this.padded.w));
 
 			this.lines.selectAll('.line')
 				.attr('d', d => this.scaledLine(d.values));
@@ -587,7 +657,57 @@ export default {
 				.attr('y', d => d.y)
 				.attr('width', this.previewDimensions.w / this.transform.k)
 				.attr('height', this.previewDimensions.h / this.transform.k);
-		}
+		},
+		/* Tooltip */
+		showTooltip(d) {
+			// console.log(this.focused)
+			let content = `<div class="content"><div class="header">${this.focused[0][this.xAxis]}</div>`
+			const c = this.focused.map((data, index) => `<div class="content-item"><span class="rect" style="background-color: ${this.z(index + 1)}"></span><span class="text">${data[this.yAxis]}</span></div>`).join('');
+			content += c;
+			const text = content += '</div>';
+			/* First assign html content */
+			this.tooltip.html(text)
+
+			/* Then calculate position relative to parent container */
+			const bboxTarget = this.verticalLine.node().getBoundingClientRect();
+			const bboxParent = d3.select(this.$el).node().getBoundingClientRect();
+			const bboxSvg = this.svg.node().getBoundingClientRect();
+			const bboxTooltip = this.tooltip.node().getBoundingClientRect();
+
+			/* Calculate real position position */
+			const top = bboxTarget.top - bboxSvg.top - this.margin.top;
+			const left = (bboxTarget.left + (bboxTarget.width / 2)) - (bboxSvg.left + this.margin.left);
+			const side = left < this.padded.w/2 ? 'right' : 'left';
+			let offsetX, offsetY;
+
+			offsetX = left + (side === 'right' ? bboxSvg.left + this.margin.left + 10 : - bboxTooltip.width / 2 - 20);
+			offsetY = (bboxParent.height / 2) - (bboxTooltip.height / 2);
+
+			if(side === 'left') {
+				if(offsetX > this.padded.w - bboxTooltip.width / 2) {
+					offsetX = this.padded.width - bboxTooltip.width;
+				}
+			} else {
+				if(offsetX < (bboxSvg.left + this.margin.left)) {
+					offsetX = bboxSvg.left + this.margin.left;
+				}
+			}
+
+			this.tooltip
+				.style('left', offsetX + 'px')
+				.style('top', offsetY + 'px');
+
+			this.tooltip.transition()
+				.duration(100)
+				.style('opacity', .9);
+
+			this.tooltip.attr('class', side === 'right' ? 'arrow_left' : 'arrow_right')
+		},
+		hideTooltip() {
+			this.tooltip.transition()
+				.duration(100)
+				.style('opacity', 0);
+		},
 	},
 };
 
@@ -599,6 +719,20 @@ export default {
 		width: 100%;
 		user-select: none;
 		position: relative;
+
+		.line-chart__grid {
+			.tick {
+				line {
+					color: rgba(0, 0, 0, 0.2);
+				}
+			}
+		}
+
+		.line-chart__button {
+			position: absolute;
+			bottom: 0;
+			right: 0;
+		}
 
 		.axis--x path {
 		}
@@ -623,11 +757,89 @@ export default {
 				fill: none;
 				stroke-width: 2px;
 			}
+			.verticalLine-container--line {
+				stroke-width: 2px;
+				stroke: rgba(0, 0, 0, .5 );
+			}
 		}
 		.line-chart__preview-window {
 			position: absolute;
 			top: 0;
 			right: 0;
+		}
+
+		$tooltipBgColor: rgb(97, 97, 97);
+		$tooltipColor: rgba(255, 255, 255, .87);
+		/* Tooltip */
+		div#tooltip {
+		  position: absolute;
+		  background: $tooltipBgColor;
+		  text-align: center;
+		  color: $tooltipColor;
+		  border-radius: 8px;
+		  max-width: 100px;
+		  padding: 2px 5px;
+		  opacity: 0;
+		  display: flex;
+		  align-items: center;
+
+		  div.content {
+		  	display: flex;
+		  	flex-direction: row;
+		  	flex-wrap: wrap;
+		  	padding: 5px;
+
+			div {
+				font-size: 0.7rem;
+				vertical-align: middle;
+				line-height: normal;
+		  		width: 100px;
+		  		display: flex;
+		  		align-content: flex-start;
+			  	&.content-item {
+			  		width: 100px;
+				  	.text {
+				  		width: auto;
+				  	}
+			  		.rect {
+			  			display: inline-block;
+			  			margin: auto;
+			  			margin-left: 0;
+			  			margin-right: 10px;
+			  			height: 5px;
+			  			width: 5px;
+			  			border: solid 0.5px;
+			  		}			  		
+			  	}
+
+			}		  	
+		  }
+
+		  /* The arrow of the tootip */
+		  &:after {
+			border: solid transparent;
+			content: " ";
+			position: absolute;
+			border-width: 5px;
+			pointer-events: none;
+			height: 0;
+			width: 0;
+		  }
+
+		  &.arrow_left:after{
+			left: 0;
+			top: calc(50% - 5px);
+			margin-left: -10px;
+			border-right-color: $tooltipBgColor        
+		  };
+
+		  &.arrow_right:after{
+			right: 0;
+			top: calc(50% - 5px);
+			margin-right: -10px;
+			border-left-color: $tooltipBgColor        
+		  };
+
 		}
 	}
 

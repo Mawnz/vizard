@@ -1,6 +1,6 @@
 <template>
 	<div class = "half">
-		<LineChart :chartData = "chartData" xAxisText="Number" yAxisText="Value"></LineChart>
+		<LineChart :chartData = "chartData" xAxisText="Number" yAxisText="Value" :options="options"></LineChart>
 		<button @click="update">Update</button>
 	</div>
 </template>
@@ -16,9 +16,12 @@ export default {
 	},
 	data() {
 		return {
-			numOfPoints: 50,
-			numOfLines: 3,
-			chartData: []
+			numOfPoints: 500,
+			numOfLines: 2,
+			chartData: [],
+			options: {
+				hideYAxis: true
+			}
 		};
 	},
 	mounted() {
