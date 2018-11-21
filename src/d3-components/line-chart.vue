@@ -34,7 +34,7 @@
 
 /* Import D3 and an improved typeof function */
 import * as d3 from 'd3';
-import { toType, clamp } from './tools';
+import { toType, clamp, multiFormat } from './tools';
 
 export default {
 	name: 'LineChart',
@@ -70,7 +70,7 @@ export default {
 			chartGrid: null,
 			lines: null,
 			margin: { top: 20, right: 200, bottom: 30, left: 50 },
-			ratio: 6,
+			ratio: 8,
 			width: 0,
 			height: 0,
 			parseTime: d3.timeParse('%Y%m%d'),
@@ -196,11 +196,13 @@ export default {
 				.scaleExtent([1, 5])
 				.translateExtent([[0, 0], [this.width, this.height]])
 				.filter(function() {
-					return d3.event.ctrlKey && (d3.event.type === 'wheel' || d3.event.type === 'mousedown');
+					return d3.event.ctrlKey ? (d3.event.type === 'wheel' || d3.event.type === 'mousedown')
+						: (d3.event.type === 'touchstart' || d3.event.type === 'touchmove');
 				})
 				.on('zoom', this.zoomed)
 				.on('end', () => {
 					/* We use a timeout since there is a delay after zooming */
+					this.zooming = false;
 					this.setLine(true);
 				});
 		},
@@ -234,7 +236,29 @@ export default {
 		 */
 		onResize() {
 			this.width = this.$el.offsetWidth; this.height = this.$el.offsetHeight;
-			this.update(this.chartData, []);
+
+			this.svg
+				.attr('height', this.height)
+				.attr('width', this.width)
+			
+			/* Preview */
+			this.preview.svg
+				.attr('height', this.previewDimensions.h)
+				.attr('width', this.previewDimensions.w)
+				.style('top', this.margin.top + 'px')
+				.style('right', this.margin.right - this.previewDimensions.w - this.preview.margin.left + 'px');
+			
+			/* Resize defs */
+			this.defs.select('rect')
+				.attr('width', this.padded.w)
+				.attr('height', this.padded.h);
+			/* Realign button */
+			d3.select(this.$el).select('.line-chart__button')
+				.style('bottom', this.margin.bottom + 'px')
+				.style('left', this.margin.left + this.padded.w + this.preview.margin.left + 'px');
+
+			/* Update whole graph */
+			this.update(this.chartData, [], true);
 		},
 		/*
 		 * Initializes constant elements in the svg
@@ -244,20 +268,30 @@ export default {
 			this.svg
 				.attr('height', this.height)
 				.attr('width', this.width)
+				.attr("preserveAspectRatio", "xMidYMid meet")
 				.call(this.dragEvents)
 				.call(this.zoom);
 
 			/* Preview */
 			this.preview.svg
-				.attr('height', this.previewDimensions.h + this.preview.margin.left + this.preview.margin.right)
-				.attr('width', this.previewDimensions.w + this.preview.margin.top + this.preview.margin.top);
+				.attr('height', this.previewDimensions.h)
+				.attr('width', this.previewDimensions.w)
+				.attr("preserveAspectRatio", "xMidYMid meet")
+				.style('top', this.margin.top + 'px')
+				.style('right', this.margin.right - this.previewDimensions.w - this.preview.margin.left + 'px');
 
 			this.preview.g = this.preview.svg
 				.append('svg:g')
-				.attr('transform', `translate(${this.preview.margin.left}, ${this.preview.margin.top})`);
+				.attr('transform', `translate(0, 0)`);
+				//.attr('transform', `translate(${this.preview.margin.left}, ${this.preview.margin.top})`);
 
 			this.preview.container = this.preview.g.append('svg:g');
-			
+
+			/* Align button */
+			d3.select(this.$el).select('.line-chart__button')
+				.style('bottom', this.margin.bottom + 'px')
+				.style('left', this.margin.left + this.padded.w + this.preview.margin.left + 'px');
+
 			/* Append group to hold our graphical elements and align inside svg using margins */
 			this.g = this.svg.append('svg:g')
 				.attr('height', this.padded.h)
@@ -307,9 +341,11 @@ export default {
 			this.makeClipPaths(graphics);
 		},
 		reset() {
+			this.forced = true;
 			/* This resets the zoom level */
 			this.svg.transition()
 				.call(this.zoom.transform, d3.zoomIdentity);
+
 			this.transform = null;
 		},
 		/*
@@ -318,7 +354,7 @@ export default {
 		 * as the data coming in (newData). Or do a clean sweep if the dimensions are
 		 * not the same.
 		 */
-		update(newData, oldData) {
+		update(newData, oldData, resizing) {
 			if(!newData || newData.length === 0) return this.redraw([])
 			this.$data.data = newData;
 
@@ -339,8 +375,8 @@ export default {
 
 			this.z.domain(newData.map(d => d.id));
 
-			/* Autoset focused to first index */
-			this.focused = newData.map(data => data.values[0]);
+			/* Autoset focused to first index except for when resizing */
+			if(!resizing) this.focused = newData.map(data => data.values[0]);
 			this.setLine(true);
 
 			/* Update axes */
@@ -387,9 +423,9 @@ export default {
 		},
 		makeClipPaths(g) {
 			/* Used to clip elements outside of zoomed area */
-			const defs = g.append('defs');
+			this.defs = g.append('defs');
 
-			defs.append('svg:clipPath')
+			this.defs.append('svg:clipPath')
 				.attr('id', 'line-chart__clip--main')
 			.append('svg:rect')
 				.attr('width', this.padded.w)
@@ -402,7 +438,7 @@ export default {
 			const rects = d.append('svg:g')
 				.attr('class', 'legend-rect')
 				.attr('id', d => `legend-rect-${d.label}_${d.id}`)
-				.attr('transform', d => `translate(0, ${(d.id - 1) * 50})`)
+				.attr('transform', d => `translate(0, ${this.margin.top + (d.id - 1) * 50})`)
 				.style('cursor', 'pointer');
 
 			/* Rectangles */
@@ -431,13 +467,13 @@ export default {
 			rects.on('click', this.toggleLineVisibility);
 		},
 		makePreviewWindow() {
-			this.preview.g.append('svg:g')
-				.attr('class', 'preview-axis axix--x')
-				.attr('transform', `translate(0, ${ this.previewDimensions.h })`);
+			// this.preview.g.append('svg:g')
+			// 	.attr('class', 'preview-axis axix--x')
+			// 	.attr('transform', `translate(0, ${ this.previewDimensions.h })`);
 
-			this.preview.g.append('svg:g')
-				.attr('class', 'preview-axis axix--y')
-				.attr('transform', `translate(0, 0)`);
+			// this.preview.g.append('svg:g')
+			// 	.attr('class', 'preview-axis axix--y')
+			// 	.attr('transform', `translate(0, 0)`);
 
 			this.preview.container.append('svg:rect')
 				.attr('x', 0)
@@ -486,17 +522,11 @@ export default {
 				.attr('id', d => `${d.label}_${d.id}`)
 				.attr('d', d => this.line(d.values))
 				.style('stroke', d => this.z(d.id))
-				.style('stroke-width', '2px')
+				.style('stroke-width', '1px')
 				.style('transition', 'all 0.1s ease')
 				.style('fill', 'none')
 				.call(this.events);
-			/*
-			dLine.append('svg:circle')
-				.attr('x', 0)
-				.attr('y', 0)
-				.attr('r', '5px')
-				.attr('fill', d => this.z(d.id));
-			*/
+
 			dLine.append('svg:text')
 				.datum(d => ({ id: d.id, value: d.values[d.values.length - 1] }))
 				.attr('transform', d => `translate(${this.x(d.value[this.xAxis])}, ${this.y(d.value[this.yAxis])})`)
@@ -508,8 +538,14 @@ export default {
 		setLine(zoom) {
 			let translateX = 0;
 
-			if(!zoom) {
-				let x = d3.event.clientX - this.margin.left - this.svg.node().getBoundingClientRect().left;
+			if(!zoom && !this.zooming) {
+				let cx = 0;
+				if(this.firedEvent)
+					cx = this.firedEvent.touches[0].clientX;
+				else
+					cx = (d3.event.type === 'touchstart' || d3.event.type === 'touchmove') ? d3.event.touches[0].clientX : d3.event.clientX;			
+				
+				let x = cx - this.margin.left - this.svg.node().getBoundingClientRect().left;
 
 				const _x = this.transform ? this.rescaledX.invert(x) : this.x.invert(x);
 				const i = this.bisect(this.$data.data[0].values, _x);
@@ -524,6 +560,8 @@ export default {
 
 				/* Add coordinates to list */
 				this.focused = this.$data.data.map(data => data.values[realIndex]);
+				/* Emit current position of the vertical line as the index in data it's on */
+				this.$emit('horizontalPosition', realIndex);
 			}
 
 			if(this.transform)
@@ -582,11 +620,12 @@ export default {
 		},
 		dragEvents(d) {
 			d
-				.on('mousedown', this.startDrag)
-				.on('mouseup', this.stopDrag)
-				.on('mousemove', this.mouseMove);
+				.on('mousedown touchstart', this.startDrag)
+				.on('mouseup touchend', this.stopDrag)
+				.on('mousemove touchmove', this.mouseMove);
 		},
 		mouseMove() {
+			if(d3.event.touches && d3.event.touches.length > 1) return;
 			if(this.dragging) {
 				this.setLine();
 			}
@@ -597,8 +636,17 @@ export default {
 				if(CL.contains('legend-rect--inner') || CL.contains('legend-rect--outer')) {
 					d3.event.preventDefault();
 				} else {
-					this.dragging = true;
-					this.setLine();
+					if(d3.event.touches && d3.event.touches.length == 1) {
+						this.firedEvent = d3.event;
+						setTimeout( () => {
+							this.dragging = true;
+							this.setLine();
+							this.firedEvent = null;
+						}, 300);
+					} else if(d3.event.type === 'mousedown'){
+						this.dragging = true;
+						this.setLine();						
+					}
 
 				}				
 			}
@@ -613,15 +661,20 @@ export default {
 		},
 		mouseover() {
 			d3.select(d3.event.target)
-				.style('cursor', 'pointer')
-				.style('stroke-width', '5px');
+				.style('stroke-width', '2px');
 		},
 		mouseout() {
 			d3.select(d3.event.target)
 				.style('cursor', 'default')
-				.style('stroke-width', '2px');
+				.style('stroke-width', '1px');
 		},
 		zoomed() {
+			if(!d3.event.sourceEvent && !this.forced) return;
+			/* We only interact with two fingers */
+			else if(!this.forced && d3.event.sourceEvent.touches && d3.event.sourceEvent.touches.length == 1) return;
+
+			this.zooming = true;
+
 			this.transform = d3.event.transform;
 			/* Set current transformation value */
 			/* Right- and bottom edge */
@@ -660,8 +713,8 @@ export default {
 		},
 		/* Tooltip */
 		showTooltip(d) {
-			// console.log(this.focused)
-			let content = `<div class="content"><div class="header">${this.focused[0][this.xAxis]}</div>`
+			const title = multiFormat(this.focused[0][this.xAxis]);
+			let content = `<div class="content"><div class="header">${title}</div>`
 			const c = this.focused.map((data, index) => `<div class="content-item"><span class="rect" style="background-color: ${this.z(index + 1)}"></span><span class="text">${data[this.yAxis]}</span></div>`).join('');
 			content += c;
 			const text = content += '</div>';
@@ -702,6 +755,9 @@ export default {
 				.style('opacity', .9);
 
 			this.tooltip.attr('class', side === 'right' ? 'arrow_left' : 'arrow_right')
+
+			/* Reset forced */
+			this.forced = false;
 		},
 		hideTooltip() {
 			this.tooltip.transition()
@@ -730,8 +786,6 @@ export default {
 
 		.line-chart__button {
 			position: absolute;
-			bottom: 0;
-			right: 0;
 		}
 
 		.axis--x path {
@@ -764,8 +818,6 @@ export default {
 		}
 		.line-chart__preview-window {
 			position: absolute;
-			top: 0;
-			right: 0;
 		}
 
 		$tooltipBgColor: rgb(97, 97, 97);
@@ -784,33 +836,33 @@ export default {
 		  align-items: center;
 
 		  div.content {
-		  	display: flex;
-		  	flex-direction: row;
-		  	flex-wrap: wrap;
-		  	padding: 5px;
+			display: flex;
+			flex-direction: row;
+			flex-wrap: wrap;
+			padding: 5px;
 
 			div {
 				font-size: 0.7rem;
 				vertical-align: middle;
 				line-height: normal;
-		  		width: 100px;
-		  		display: flex;
-		  		align-content: flex-start;
-			  	&.content-item {
-			  		width: 100px;
-				  	.text {
-				  		width: auto;
-				  	}
-			  		.rect {
-			  			display: inline-block;
-			  			margin: auto;
-			  			margin-left: 0;
-			  			margin-right: 10px;
-			  			height: 5px;
-			  			width: 5px;
-			  			border: solid 0.5px;
-			  		}			  		
-			  	}
+				width: 100px;
+				display: flex;
+				align-content: flex-start;
+				&.content-item {
+					width: 100px;
+					.text {
+						width: auto;
+					}
+					.rect {
+						display: inline-block;
+						margin: auto;
+						margin-left: 0;
+						margin-right: 10px;
+						height: 5px;
+						width: 5px;
+						border: solid 0.5px;
+					}			  		
+				}
 
 			}		  	
 		  }
